@@ -1,0 +1,70 @@
+name: PR Quota Limit
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  check-pr-quota:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR quota
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prAuthor = context.payload.pull_request.user.login;
+            const currentPRNumber = context.payload.pull_request.number;
+
+            console.log(`Checking PR quota for user: ${prAuthor}`);
+            console.log(`Current PR number: ${currentPRNumber}`);
+
+            // Get all open PRs
+            const { data: allPRs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100
+            });
+
+            // Filter PRs by the same author
+            const userPRs = allPRs.filter(pr => pr.user.login === prAuthor);
+            const openCount = userPRs.length;
+
+            console.log(`User ${prAuthor} has ${openCount} open PR(s)`);
+
+            // Check if exceeds quota (10 PRs)
+            const maxPRs = 10;
+            if (openCount > maxPRs) {
+              const availableSlots = 0;
+              const currentStatus = `${availableSlots}/${maxPRs}`;
+
+              const message = `This pull request will be temporarily closed (Current status: ${currentStatus} open slots available). We encourage you to submit a new PR once the quota policy permits future contributions.`;
+
+              console.log(`Quota exceeded! Closing PR #${currentPRNumber}`);
+              console.log(`Message: ${message}`);
+
+              // Add comment to the PR
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: currentPRNumber,
+                body: message
+              });
+
+              // Close the PR
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: currentPRNumber,
+                state: 'closed'
+              });
+
+              console.log(`PR #${currentPRNumber} has been closed due to quota limit.`);
+            } else {
+              const availableSlots = maxPRs - openCount;
+              console.log(`Quota check passed. User has ${availableSlots} slot(s) available.`);
+            }

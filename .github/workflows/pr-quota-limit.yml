@@ -16,55 +16,87 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const prAuthor = context.payload.pull_request.user.login;
-            const currentPRNumber = context.payload.pull_request.number;
+            try {
+              const prAuthor = context.payload.pull_request.user.login;
+              const currentPRNumber = context.payload.pull_request.number;
 
-            console.log(`Checking PR quota for user: ${prAuthor}`);
-            console.log(`Current PR number: ${currentPRNumber}`);
+              console.log(`Checking PR quota for user: ${prAuthor}`);
+              console.log(`Current PR number: ${currentPRNumber}`);
 
-            // Get all open PRs
-            const { data: allPRs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              per_page: 100
-            });
+              // Get all open PRs with pagination support
+              let allPRs = [];
+              let page = 1;
+              let hasMorePages = true;
 
-            // Filter PRs by the same author
-            const userPRs = allPRs.filter(pr => pr.user.login === prAuthor);
-            const openCount = userPRs.length;
+              while (hasMorePages) {
+                const { data: prs } = await github.rest.pulls.list({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  state: 'open',
+                  per_page: 100,
+                  page: page
+                });
 
-            console.log(`User ${prAuthor} has ${openCount} open PR(s)`);
+                allPRs = allPRs.concat(prs);
 
-            // Check if exceeds quota (10 PRs)
-            const maxPRs = 10;
-            if (openCount > maxPRs) {
-              const availableSlots = 0;
-              const currentStatus = `${availableSlots}/${maxPRs}`;
+                // If we got less than 100 PRs, we've reached the last page
+                if (prs.length < 100) {
+                  hasMorePages = false;
+                } else {
+                  page++;
+                }
+              }
 
-              const message = `This pull request will be temporarily closed (Current status: ${currentStatus} open slots available). We encourage you to submit a new PR once the quota policy permits future contributions.`;
+              console.log(`Total open PRs in repository: ${allPRs.length}`);
 
-              console.log(`Quota exceeded! Closing PR #${currentPRNumber}`);
-              console.log(`Message: ${message}`);
+              // Filter PRs by the same author
+              const userPRs = allPRs.filter(pr => pr.user.login === prAuthor);
+              const openCount = userPRs.length;
 
-              // Add comment to the PR
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: currentPRNumber,
-                body: message
-              });
+              console.log(`User ${prAuthor} has ${openCount} open PR(s)`);
 
-              // Close the PR
-              await github.rest.pulls.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: currentPRNumber,
-                state: 'closed'
-              });
+              // Check if exceeds quota (10 PRs max)
+              const maxPRs = 10;
+              if (openCount > maxPRs) {
+                const availableSlots = Math.max(0, maxPRs - openCount);
+                const currentStatus = `${availableSlots}/${maxPRs}`;
 
-              console.log(`PR #${currentPRNumber} has been closed due to quota limit.`);
-            } else {
-              const availableSlots = maxPRs - openCount;
-              console.log(`Quota check passed. User has ${availableSlots} slot(s) available.`);
+                const message = `This pull request will be temporarily closed (Current status: ${currentStatus} open slots available). We encourage you to submit a new PR once the quota policy permits future contributions.`;
+
+                console.log(`Quota exceeded! Closing PR #${currentPRNumber}`);
+                console.log(`Message: ${message}`);
+
+                // Add comment to the PR
+                try {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: currentPRNumber,
+                    body: message
+                  });
+                  console.log('Comment added successfully');
+                } catch (commentError) {
+                  console.error('Failed to add comment:', commentError.message);
+                }
+
+                // Close the PR
+                try {
+                  await github.rest.pulls.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: currentPRNumber,
+                    state: 'closed'
+                  });
+                  console.log(`PR #${currentPRNumber} has been closed due to quota limit.`);
+                } catch (closeError) {
+                  console.error('Failed to close PR:', closeError.message);
+                  throw closeError; // Re-throw to fail the workflow
+                }
+              } else {
+                const availableSlots = maxPRs - openCount;
+                console.log(`Quota check passed. User has ${availableSlots} slot(s) available.`);
+              }
+            } catch (error) {
+              console.error('Error in PR quota check:', error.message);
+              throw error; // Re-throw to fail the workflow
             }

@@ -58,12 +58,13 @@ jobs:
               // Check if exceeds quota (10 PRs max)
               const maxPRs = 10;
               if (openCount > maxPRs) {
-                const availableSlots = Math.max(0, maxPRs - openCount);
+                const availableSlots = 0;
                 const currentStatus = `${availableSlots}/${maxPRs}`;
 
                 const message = `This pull request will be temporarily closed (Current status: ${currentStatus} open slots available). We encourage you to submit a new PR once the quota policy permits future contributions.`;
 
                 console.log(`Quota exceeded! Closing PR #${currentPRNumber}`);
+                console.log(`User has ${openCount} open PRs, which exceeds the limit of ${maxPRs}`);
                 console.log(`Message: ${message}`);
 
                 // Add comment to the PR
